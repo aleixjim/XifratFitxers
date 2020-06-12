@@ -1,5 +1,4 @@
 
-
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileNotFoundException;
@@ -8,7 +7,16 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.security.KeyFactory;
+import java.security.KeyPair;
+import java.security.KeyPairGenerator;
 import java.security.MessageDigest;
+import java.security.PrivateKey;
+import java.security.PublicKey;
+import java.security.Signature;
+import java.security.spec.X509EncodedKeySpec;
 import java.util.Arrays;
 import java.util.Scanner;
 
@@ -19,11 +27,7 @@ import javax.crypto.spec.SecretKeySpec;
 
 public class XifratFitxers {
 	private static Scanner sc = new Scanner(System.in);
-	private static final String[] invalidchars = { "\\", "/", ":", "*", "?", "<", ">", "|", "\"" }; // CARACTERS
-																									// ESPECIALS QUE NO
-																									// ACEPTA EL SISTEMA
-																									// DE FITXERS DE
-																									// WINDOWS
+	private static final String[] invalidchars = { "\\", "/", ":", "*", "?", "<", ">", "|", "\"" };
 
 	public static void main(String[] args) {
 		inici();
@@ -45,18 +49,15 @@ public class XifratFitxers {
 	}
 
 	private static void xifrar() {
-		// FUNCIO PER DEMANAR LA RUTA DEL FITXER
 		File ruta = getRuta();
 		File desti = null;
 		FileInputStream is = null;
 		FileOutputStream os = null;
 		String nom;
-
 		System.out.println("Introdueix un nom pel fitxer xifrat: ");
+
 		boolean correct;
-		//DO WHILE
 		do {
-			//CRIDO LA FUNCIO PER AGAFAR EL NOM
 			nom = getNom();
 			String extensio = getFileExtension(ruta);
 			desti = new File("fitxers\\" + nom + extensio);
@@ -83,7 +84,6 @@ public class XifratFitxers {
 		String passwd;
 		passwd = sc.nextLine();
 		while (passwd.length() > 24) {
-			//ESTABLEIXO UN LIMIT DE CARACTERS PERQUE LA CONTRASENYA DE 128 BITS, SI TE NUMEROS I SIMBOLS, CABRAN COM A MAXIM 24 CARACTERS
 			System.out.println("La clau no pot superar els 24 caràcters");
 			passwd = sc.nextLine();
 		}
@@ -91,14 +91,42 @@ public class XifratFitxers {
 		SecretKey sKey = generateKey(passwd);
 
 		try {
+			byte[] rutabytes = Files.readAllBytes(ruta.toPath());
 			Cipher cipher = Cipher.getInstance("AES/ECB/PKCS5Padding");
 			cipher.init(Cipher.ENCRYPT_MODE, sKey);
+//
+//			
+//			
+//			copy(is, cos);
+//
+//			cos.close();
 
-			CipherOutputStream cos = new CipherOutputStream(os, cipher);
-			//CRIDO A LA FUNCIO PER COPIAR
-			copy(is, cos);
+			File firma = new File("fitxers\\firma.sig");
+			if(!firma.exists())
+				firma.createNewFile();
+			
+			
+			KeyPair kp = randomGenerate();
+			Signature signer = Signature.getInstance("SHA1withRSA");
+			signer.initSign(kp.getPrivate());
+			PrivateKey priv = kp.getPrivate();
+			PublicKey pub = kp.getPublic();
 
-			cos.close();
+
+			FileOutputStream sigos = new FileOutputStream(firma, false);
+			byte[] realSig = priv.getEncoded();
+			sigos.write(realSig);
+			sigos.close();
+			
+
+			FileOutputStream keyfos = new FileOutputStream("fitxers\\key.public");
+			byte[] key = pub.getEncoded();
+			keyfos.write(key);
+			keyfos.close();
+			
+			signFile(cipher, signer, is, os);
+			
+			
 
 		} catch (Exception e) {
 			System.out.println("Error xifrant les dades: " + e);
@@ -107,9 +135,44 @@ public class XifratFitxers {
 		System.out.println("XIFRAT REALITZAT CORRECTAMENT");
 
 	}
+	
+
+	private static KeyPair randomGenerate() {
+		KeyPair keys = null;
+		try {
+			KeyPairGenerator keyGen = KeyPairGenerator.getInstance("RSA");
+			keyGen.initialize(2048);
+			keys = keyGen.genKeyPair();
+		} catch (Exception ex) {
+			System.err.println("Generador no disponible.");
+		}
+		return keys;
+	}
+
+	private static void signFile(Cipher ci, Signature sign, InputStream in, OutputStream out) {
+
+		byte[] ibuf = new byte[1024];
+		int len;
+		try {
+			while ((len = in.read(ibuf)) != -1) {
+				sign.update(ibuf, 0, len);
+				byte[] obuf = ci.update(ibuf, 0, len);
+				if (obuf != null)
+					out.write(obuf);
+			}
+
+			
+
+		} catch (Exception e) {
+			// TODO Auto-generated catch block
+			e.printStackTrace();
+		}
+
+	}
+
 
 	private static void copy(InputStream is, OutputStream os) throws IOException {
-
+		
 		int i;
 		byte[] b = new byte[1024];
 		while ((i = is.read(b)) != -1) {
@@ -117,7 +180,7 @@ public class XifratFitxers {
 		}
 
 	}
-
+	
 	private static void desxifrar() {
 		File ruta = getRuta();
 		System.out.println("Introdueix un nom pel fitxer desxifrat");
@@ -161,22 +224,64 @@ public class XifratFitxers {
 		SecretKey sKey = generateKey(passwd);
 
 		try {
+			byte[] rutabytes = Files.readAllBytes(ruta.toPath());
 			Cipher cipher = Cipher.getInstance("AES/ECB/PKCS5Padding");
 			cipher.init(Cipher.DECRYPT_MODE, sKey);
-
+			
+			
 			CipherOutputStream cos = new CipherOutputStream(os, cipher);
 
 			copy(is, cos);
 
 			cos.close();
+			
+			
 
+			Path path = Paths.get("fitxers\\key.public");
+			byte[] bytes = Files.readAllBytes(path);
+
+			X509EncodedKeySpec ks = new X509EncodedKeySpec(bytes);
+			System.out.println("1");
+			KeyFactory kf = KeyFactory.getInstance("RSA");
+			System.out.println("2");
+			PublicKey pub = kf.generatePublic(ks);
+		    
+
+			
+			byte[] messageBytes = Files.readAllBytes(desti.toPath());
+	        MessageDigest md = MessageDigest.getInstance("SHA-256");
+	        byte[] newMessageHash = md.digest(messageBytes);
+
+	        
+			System.out.println("2");
+	        byte[] encryptedMessageHash = Files.readAllBytes(Paths.get("fitxers\\firma.sig"));
+	        
+	        
+
+	        Cipher cipher2 = Cipher.getInstance("RSA");
+	        cipher2.init(Cipher.DECRYPT_MODE, pub);
+			System.out.println("4");
+	        byte[] decryptedMessageHash = cipher2.doFinal(encryptedMessageHash);
+
+			System.out.println("5");
+	        
+	        boolean isCorrect = Arrays.equals(decryptedMessageHash, newMessageHash);
+	        System.out.println("Signature " + (isCorrect ? "correct" : "incorrect"));
+			
+	        
+	        
+	        
+			
 		} catch (Exception e) {
 			System.out.println("Error xifrant les dades: " + e);
 		}
+		
+		
 
 		System.out.println("DESXIFRAT REALITZAT CORRECTAMENT");
 	}
 
+	
 	private static SecretKey generateKey(String passwd) {
 		SecretKey sKey = null;
 		try {
@@ -220,7 +325,6 @@ public class XifratFitxers {
 		return nom;
 	}
 
-	// FUNCIO PER A AGAFAR LA EXTENSIO DEL FITXER ORIGINAL, PER CREAR LA COPIA
 	private static String getFileExtension(File file) {
 		String name = file.getName();
 		int lastIndexOf = name.lastIndexOf(".");
